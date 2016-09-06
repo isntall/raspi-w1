@@ -30,39 +30,47 @@ function rrdgraph() {
       echo "  DEF:${i}avg=${i}.rrd:${i}:AVERAGE  DEF:${i}min=${i}.rrd:${i}:MIN DEF:${i}max=${i}.rrd:${i}:MAX $DRAW   GPRINT:${i}avg:LAST:Cur\:%5.2lf  GPRINT:${i}avg:AVERAGE:Avg\:%5.2lf  GPRINT:${i}min:MIN:Min\:%5.2lf GPRINT:${i}max:MAX:Max\:%5.2lf COMMENT:\\n " ;  \
     done)
 
-  cp w1_graph-$DUR.png /var/www/html/
 }
 
 W1DIR="/sys/bus/w1/devices/"
 NUMM=0
-DEVICEDIR=$(cd $W1DIR && ls | grep '28-')
+DEVICEDIR=$(cd $W1DIR && ls)
 if [ "graph" = "$1" ]; then
   for i in $DEVICEDIR; do
-    SEN[$NUMM]="$i"
-    ((NUMM++))
+    if [[ ${i} == *"28-"* ]] 
+    then
+      SEN[$NUMM]="$i"
+      ((NUMM++))
+    fi
   done
   count=0
   DUR="3600"
   if [ ! -z $2 ]; then
     DUR=$2 # && echo "DUR=$DUR"
     rrdgraph $DUR
+    cp w1_graph-$DUR.png /usr/share/nginx/html/
   else
     rrdgraph 1hour
   fi
 else
+  touch ./active
   for i in $DEVICEDIR; do
-    TEMPC_RAW=$(cat $W1DIR/$i/w1_slave | grep 't=' | awk -F= '{print $2}')
-    TEMPC=$(echo "scale=4; $TEMPC_RAW/1000" | bc)
-    TEMPF=$(echo "scale=4; ($TEMPC*(9.0/5.0))+32.0" | bc)
-    if [[ ! -f ./${i}.rrd ]]; then
-      rrdtool create ${i}.rrd \
-      --step $INTERVAL \
-      DS:${i}:GAUGE:$HEARTBEAT:-68:258 \
-      RRA:MIN:0.5:1:$MAXRECORD \
-      RRA:MAX:0.5:1:$MAXRECORD \
-      RRA:AVERAGE:0.5:1:$MAXRECORD
+    if [[ ${i} == *"28-"* ]]
+    then
+      TEMP_RAW=$(python ./thermometer.py ${i})
+      TEMPF=$(echo ${TEMP_RAW} | awk '{print $1}')
+      TEMPC=$(echo ${TEMP_RAW} | awk '{print $2}')
+      if [[ ! -f ./${i}.rrd ]]; then
+        rrdtool create ${i}.rrd \
+        --step $INTERVAL \
+        DS:${i}:GAUGE:$HEARTBEAT:-68:258 \
+        RRA:MIN:0.5:1:$MAXRECORD \
+        RRA:MAX:0.5:1:$MAXRECORD \
+        RRA:AVERAGE:0.5:1:$MAXRECORD
+      fi
+      rrdupdate ./${i}.rrd --template ${i} N:$TEMPF
+      echo -e "$(date +%s)\t${TEMPC}\t${TEMPF}" >> ./${i}.txt
     fi
-    rrdupdate ./${i}.rrd --template ${i} N:$TEMPF
   done
-#  date
+  rm ./active
 fi
